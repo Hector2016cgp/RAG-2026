@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ conversation.title }} - RAG Platform{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-12 gap-6">
+    
+    <!-- Sidebar - Historial -->
+    <div class="col-span-12 md:col-span-3 bg-white rounded-lg shadow-md p-4 max-h-screen overflow-y-auto">
+        <div class="mb-4">
+            <a href="{% url 'chat:dashboard' %}" class="text-blue-600 hover:text-blue-700 text-sm">
+                <i class="fas fa-arrow-left mr-1"></i> Volver al Dashboard
+            </a>
+        </div>
+        
+        <div class="mb-4">
+            <h3 class="text-lg font-bold text-gray-900">{{ conversation.title }}</h3>
+            <p class="text-xs text-gray-500 mt-1">
+                {% if conversation.engine_used == 'faiss' %}
+                <i class="fas fa-search text-blue-500"></i> FAISS
+                {% else %}
+                <i class="fas fa-project-diagram text-green-500"></i> Neo4j
+                {% endif %}
+                • {{ messages.count }} mensajes
+            </p>
+        </div>
+    </div>
+    
+    <!-- Chat Area -->
+    <style>
+        .whatsapp-bg {
+            background: linear-gradient(135deg, #e3f0ff 0%, #b3d8ff 100%);
+        }
+        .chat-bubble-user {
+            background: #1976d2;
+            color: #fff;
+            border-radius: 18px 18px 4px 18px;
+            box-shadow: 0 2px 8px rgba(25, 118, 210, 0.08);
+            margin-left: 48px;
+            position: relative;
+        }
+        .chat-bubble-assistant {
+            background: #f1f7ff;
+            color: #222;
+            border-radius: 18px 18px 18px 4px;
+            box-shadow: 0 2px 8px rgba(25, 118, 210, 0.04);
+            margin-right: 48px;
+            position: relative;
+        }
+        .chat-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-top: auto;
+        }
+        .chat-row {
+            display: flex;
+            align-items: flex-end;
+            margin-bottom: 12px;
+        }
+        .chat-row.user {
+            flex-direction: row-reverse;
+        }
+        .chat-meta {
+            font-size: 0.75rem;
+            color: #90caf9;
+            margin-top: 4px;
+            text-align: right;
+        }
+        .chat-meta.assistant {
+            color: #90a4ae;
+            text-align: left;
+        }
+    </style>
+
+    <div class="col-span-12 md:col-span-9 whatsapp-bg rounded-lg shadow-md flex flex-col" style="height: calc(100vh - 150px);">
+            <!-- Messages -->
+            <div id="messages-container" class="flex-1 overflow-y-auto p-6">
+                    {% for message in messages %}
+                    <div class="chat-row {% if message.role == 'user' %}user{% endif %}">
+                            {% if message.role == 'user' %}
+                                    <img src="https://ui-avatars.com/api/?name=User&background=1976d2&color=fff" alt="User" class="chat-avatar ml-2">
+                            {% else %}
+                                    <img src="https://ui-avatars.com/api/?name=AI&background=f1f7ff&color=1976d2" alt="AI" class="chat-avatar mr-2">
+                            {% endif %}
+                            <div class="{% if message.role == 'user' %}chat-bubble-user{% else %}chat-bubble-assistant{% endif %} px-4 py-3 max-w-2xl">
+                                    <p class="whitespace-pre-wrap">{{ message.content }}</p>
+                                    {% if message.retrieval_time %}
+                                    <div class="chat-meta {% if message.role != 'user' %}assistant{% endif %}">
+                                            <i class="fas {% if message.engine_used == 'faiss' %}fa-search{% else %}fa-project-diagram{% endif %} mr-1"></i>
+                                            {{ message.engine_used|upper }} |
+                                            Recuperación: {{ message.retrieval_time|floatformat:2 }}s |
+                                            Generación: {{ message.generation_time|floatformat:2 }}s
+                                    </div>
+                                    {% endif %}
+                            </div>
+                    </div>
+                    {% endfor %}
+            </div>
+
+            <!-- Input -->
+            <div class="border-t border-gray-200 p-4 bg-white">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
+                <!-- Selector de Motor de Búsqueda -->
+                <div class="flex items-center">
+                    <label class="text-xs text-gray-500 mr-1">Búsqueda:</label>
+                    <select id="engine-selector" class="px-3 py-1 border border-gray-300 rounded text-sm bg-white">
+                        <option value="faiss" {% if conversation.engine_used == 'faiss' %}selected{% endif %}>🔍 Naive (Vector)</option>
+                        <option value="neo4j" {% if conversation.engine_used == 'neo4j' %}selected{% endif %}>🕸️ Graph (Grafo)</option>
+                    </select>
+                </div>
+                
+                <!-- NUEVO: Selector de Modelo IA -->
+                <div class="flex items-center">
+                    <label class="text-xs text-gray-500 mr-1">Modelo IA:</label>
+                    <select id="llm-provider-selector" class="px-3 py-1 border border-gray-300 rounded text-sm bg-white">
+                        <option value="">🔧 Por defecto (.env)</option>
+                        <option value="openai">🤖 OpenAI (GPT-4o)</option>
+                        <option value="gemini">✨ Google Gemini</option>
+                        <option value="none">📚 Sin IA (solo búsqueda)</option>
+                    </select>
+                </div>
+                
+                <!-- Selector de Documento -->
+                <div class="flex items-center">
+                    <label class="text-xs text-gray-500 mr-1">Documento:</label>
+                    <select id="document-selector" class="px-3 py-1 border border-gray-300 rounded text-sm bg-white">
+                        <option value="">📄 Todos</option>
+                        {% for doc in documents %}
+                        <option value="{{ doc.id }}">{{ doc.title|truncatechars:30 }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            
+            <form id="chat-form" class="flex space-x-2">
+                <input 
+                    type="text"
+                    id="message-input"
+                    placeholder="Escribe tu pregunta..."
+                    class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    required
+                >
+                <button 
+                    type="submit"
+                    id="send-btn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg"
+                >
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </form>
+            
+            <div id="loading" class="hidden mt-2 text-sm text-gray-500">
+                <i class="fas fa-spinner fa-spin mr-2"></i> Procesando...
+            </div>
+        </div>
+        
+    </div>
+</div>
+
+<script>
+const conversationId = {{ conversation.id }};
+const messagesContainer = document.getElementById('messages-container');
+
+// Scroll al final
+messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const messageInput = document.getElementById('message-input');
+    const message = messageInput.value.trim();
+    const engine = document.getElementById('engine-selector').value;
+    const llmProvider = document.getElementById('llm-provider-selector').value;
+    const documentId = document.getElementById('document-selector').value;
+    
+    if (!message) return;
+    
+    messageInput.disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('loading').classList.remove('hidden');
+    
+    addMessage('user', message);
+    messageInput.value = '';
+    
+    try {
+        const response = await fetch("{% url 'chat:send_message' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                conversation_id: conversationId,
+                message: message,
+                engine: engine,
+                llm_provider: llmProvider || null,
+                document_id: documentId || null
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            addMessage('assistant', data.assistant_message.content, data.assistant_message);
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('system', 'Error al procesar el mensaje');
+    } finally {
+        messageInput.disabled = false;
+        document.getElementById('send-btn').disabled = false;
+        document.getElementById('loading').classList.add('hidden');
+        messageInput.focus();
+    }
+});
+
+function addMessage(role, content, metadata = {}) {
+    const div = document.createElement('div');
+    div.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-2xl px-4 py-3 rounded-lg ${
+        role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
+    }`;
+    
+    let metaInfo = '';
+    if (metadata.engine) {
+        const llmUsed = metadata.llm_used || 'Sin IA';
+        const llmLabel = llmUsed === 'none' ? 'Solo búsqueda' : llmUsed;
+        metaInfo = `<div class="text-xs mt-2 ${role === 'user' ? 'text-blue-200' : 'text-gray-500'}">
+            <i class="fas ${metadata.engine === 'faiss' ? 'fa-search' : 'fa-project-diagram'} mr-1"></i>
+            ${metadata.engine.toUpperCase()} | 
+            <i class="fas fa-robot mr-1"></i>${llmLabel} |
+            Recuperación: ${metadata.retrieval_time?.toFixed(2) || 'N/A'}s | 
+            Generación: ${metadata.generation_time?.toFixed(2) || 'N/A'}s
+        </div>`;
+    }
+    
+    bubble.innerHTML = `<p class="whitespace-pre-wrap">${content}</p>${metaInfo}`;
+    div.appendChild(bubble);
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+</script>
+{% endblock %}

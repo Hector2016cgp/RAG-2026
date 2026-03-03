@@ -1,0 +1,403 @@
+{% extends 'base.html' %}
+
+{% block title %}Chat - RAG Platform{% endblock %}
+
+{% block main_class %}max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-12 gap-6" style="height: calc(100vh - 180px);">
+    
+    <!-- Sidebar - Historial de conversaciones -->
+    <div class="col-span-12 md:col-span-3 bg-white rounded-lg shadow-md p-4 flex flex-col overflow-hidden">
+        <div class="mb-4">
+            <button 
+                id="new-conversation-btn"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-200"
+            >
+                <i class="fas fa-plus mr-2"></i> Nueva Conversación
+            </button>
+        </div>
+        
+        <div class="mb-4">
+            <h3 class="text-sm font-semibold text-gray-700 uppercase mb-2">
+                <i class="fas fa-history mr-1"></i> Recientes
+            </h3>
+        </div>
+        
+        <div id="conversations-list" class="space-y-2 overflow-y-auto flex-1">
+            {% for conv in conversations %}
+            <div class="group relative p-3 rounded-lg hover:bg-gray-100 transition duration-200 cursor-pointer conversation-item" data-id="{{ conv.id }}" data-title="{{ conv.title }}" data-engine="{{ conv.engine_used }}">
+                <div class="flex-1 min-w-0 pr-8">
+                    <p class="text-sm font-medium text-gray-900 truncate">
+                        {{ conv.title }}
+                    </p>
+                    <p class="text-xs text-gray-500">
+                        {% if conv.engine_used == 'faiss' %}
+                        <i class="fas fa-search text-blue-500"></i> FAISS
+                        {% else %}
+                        <i class="fas fa-project-diagram text-green-500"></i> Neo4j
+                        {% endif %}
+                        • {{ conv.message_count }} msgs
+                    </p>
+                </div>
+                <button 
+                    onclick="event.stopPropagation(); deleteConversation({{ conv.id }})"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                    title="Eliminar"
+                >
+                    <i class="fas fa-trash text-xs"></i>
+                </button>
+            </div>
+            {% empty %}
+            <p class="text-sm text-gray-500 text-center py-4">
+                No hay conversaciones aún
+            </p>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <!-- Main Chat Area -->
+    <div class="col-span-12 md:col-span-9 bg-white rounded-lg shadow-md flex flex-col overflow-hidden">
+        
+        <!-- Chat Header -->
+        <div class="border-b border-gray-200 p-4 flex-shrink-0">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h2 id="chat-title" class="text-xl font-bold text-gray-900">
+                        <i class="fas fa-comments text-blue-600 mr-2"></i>
+                        Nueva Conversación
+                    </h2>
+                    <p id="chat-subtitle" class="text-sm text-gray-500">Configura y envía tu primer mensaje</p>
+                </div>
+                
+                <!-- Selectores -->
+                <div id="selectors-container" class="flex items-center space-x-4 flex-wrap gap-2">
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm font-medium text-gray-700">Motor:</label>
+                        <select 
+                            id="engine-selector"
+                            class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        >
+                            <option value="faiss">Naive</option>
+                            <option value="neo4j">Graph</option>
+                        </select>
+                    </div>
+                    
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm font-medium text-gray-700">Modelo:</label>
+                        <select 
+                            id="llm-selector"
+                            class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        >
+                            <option value="">Por defecto</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="gemini">Gemini</option>
+                            <option value="none">Sin IA</option>
+                        </select>
+                    </div>
+                    
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm font-medium text-gray-700">Doc:</label>
+                        <select 
+                            id="document-selector"
+                            class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        >
+                            <option value="">Todos</option>
+                            {% for doc in documents %}
+                            <option value="{{ doc.id }}">{{ doc.title|truncatechars:20 }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Messages Area -->
+        <div id="messages-container" class="flex-1 overflow-y-auto p-6 space-y-4">
+            <div class="text-center text-gray-500 py-12">
+                <i class="fas fa-comments text-6xl mb-4 text-gray-300"></i>
+                <p class="text-lg">Selecciona o crea una conversación para comenzar</p>
+                <p class="text-sm mt-2">Elige entre búsqueda semántica (FAISS) o relacional (Neo4j)</p>
+            </div>
+        </div>
+        
+        <!-- Input Area -->
+        <div class="border-t border-gray-200 p-4 flex-shrink-0">
+            <form id="chat-form" class="flex space-x-2">
+                <input 
+                    type="text"
+                    id="message-input"
+                    placeholder="Escribe tu pregunta sobre los documentos..."
+                    class="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    required
+                >
+                <button 
+                    type="submit"
+                    id="send-btn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </form>
+            
+            <div id="loading-indicator" class="hidden mt-2 text-sm text-gray-500">
+                <i class="fas fa-spinner fa-spin mr-2"></i> Procesando...
+            </div>
+        </div>
+        
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentConversationId = null;
+let conversationLocked = false;
+
+// Eliminar conversación
+function deleteConversation(conversationId) {
+    if (confirm('¿Eliminar esta conversación?')) {
+        fetch(`/chat/conversation/${conversationId}/delete/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Si es la conversación actual, resetear
+                if (currentConversationId === conversationId) {
+                    resetConversation();
+                }
+                // Remover del sidebar
+                document.querySelector(`[data-id="${conversationId}"]`)?.remove();
+            }
+        })
+        .catch(() => location.reload());
+    }
+}
+
+// Nueva conversación (resetear todo)
+document.getElementById('new-conversation-btn').addEventListener('click', () => {
+    resetConversation();
+});
+
+function resetConversation() {
+    currentConversationId = null;
+    conversationLocked = false;
+    
+    // Habilitar selectores
+    document.getElementById('engine-selector').disabled = false;
+    document.getElementById('llm-selector').disabled = false;
+    document.getElementById('document-selector').disabled = false;
+    document.getElementById('selectors-container').classList.remove('opacity-50');
+    
+    // Resetear título
+    document.getElementById('chat-title').innerHTML = '<i class="fas fa-comments text-blue-600 mr-2"></i>Nueva Conversación';
+    document.getElementById('chat-subtitle').textContent = 'Configura y envía tu primer mensaje';
+    
+    // Limpiar mensajes
+    const container = document.getElementById('messages-container');
+    container.innerHTML = `
+        <div class="text-center text-gray-500 py-12">
+            <i class="fas fa-comments text-6xl mb-4 text-gray-300"></i>
+            <p class="text-lg">Escribe tu pregunta para comenzar</p>
+            <p class="text-sm mt-2">Se creará una conversación automáticamente</p>
+        </div>
+    `;
+    
+    // Quitar selección del sidebar
+    document.querySelectorAll('.conversation-item').forEach(el => {
+        el.classList.remove('bg-blue-50', 'border-l-4', 'border-blue-600');
+    });
+}
+
+// Cargar conversación existente
+document.querySelectorAll('.conversation-item').forEach(item => {
+    item.addEventListener('click', async () => {
+        const convId = item.dataset.id;
+        const convTitle = item.dataset.title;
+        const convEngine = item.dataset.engine;
+        
+        currentConversationId = parseInt(convId);
+        conversationLocked = true;
+        
+        // Bloquear selectores
+        lockSelectors();
+        
+        // Actualizar título
+        document.getElementById('chat-title').innerHTML = `<i class="fas fa-comments text-blue-600 mr-2"></i>${convTitle}`;
+        document.getElementById('chat-subtitle').textContent = 'Conversación en curso';
+        
+        // Marcar como seleccionada
+        document.querySelectorAll('.conversation-item').forEach(el => {
+            el.classList.remove('bg-blue-50', 'border-l-4', 'border-blue-600');
+        });
+        item.classList.add('bg-blue-50', 'border-l-4', 'border-blue-600');
+        
+        // Cargar mensajes
+        await loadMessages(convId);
+    });
+});
+
+async function loadMessages(conversationId) {
+    try {
+        const response = await fetch(`/chat/conversation/${conversationId}/messages/`);
+        const data = await response.json();
+        
+        const container = document.getElementById('messages-container');
+        container.innerHTML = '';
+        
+        if (data.messages && data.messages.length > 0) {
+            data.messages.forEach(msg => {
+                addMessage(msg.role, msg.content, {
+                    engine: msg.engine_used,
+                    retrieval_time: msg.retrieval_time,
+                    generation_time: msg.generation_time
+                });
+            });
+        } else {
+            container.innerHTML = '<p class="text-center text-gray-500 py-4">No hay mensajes aún</p>';
+        }
+    } catch (error) {
+        console.error('Error cargando mensajes:', error);
+    }
+}
+
+function lockSelectors() {
+    document.getElementById('engine-selector').disabled = true;
+    document.getElementById('llm-selector').disabled = true;
+    document.getElementById('document-selector').disabled = true;
+    document.getElementById('selectors-container').classList.add('opacity-50');
+}
+
+// Enviar mensaje
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const messageInput = document.getElementById('message-input');
+    const message = messageInput.value.trim();
+    const engine = document.getElementById('engine-selector').value;
+    const llmProvider = document.getElementById('llm-selector').value;
+    const documentId = document.getElementById('document-selector').value;
+    
+    if (!message) return;
+    
+    // Limpiar mensaje inicial si existe
+    const initialMsg = document.querySelector('#messages-container .text-center');
+    if (initialMsg) initialMsg.remove();
+    
+    // Deshabilitar input
+    messageInput.disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('loading-indicator').classList.remove('hidden');
+    
+    // Agregar mensaje del usuario
+    addMessage('user', message);
+    messageInput.value = '';
+    
+    try {
+        const response = await fetch("{% url 'chat:send_message' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                conversation_id: currentConversationId,
+                message: message,
+                engine: engine,
+                llm_provider: llmProvider || null,
+                document_id: documentId || null
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Si se creó nueva conversación
+            if (data.is_new_conversation && data.conversation_id) {
+                currentConversationId = data.conversation_id;
+                conversationLocked = true;
+                lockSelectors();
+                
+                // Actualizar título
+                document.getElementById('chat-title').innerHTML = `<i class="fas fa-comments text-blue-600 mr-2"></i>${data.conversation_title}`;
+                document.getElementById('chat-subtitle').textContent = 'Conversación en curso';
+                
+                // Agregar al sidebar
+                addConversationToSidebar(data.conversation_id, data.conversation_title, engine);
+            }
+            
+            addMessage('assistant', data.assistant_message.content, {
+                engine: data.assistant_message.engine,
+                llm_used: data.assistant_message.llm_used,
+                retrieval_time: data.assistant_message.retrieval_time,
+                generation_time: data.assistant_message.generation_time
+            });
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('system', 'Error al procesar el mensaje');
+    } finally {
+        messageInput.disabled = false;
+        document.getElementById('send-btn').disabled = false;
+        document.getElementById('loading-indicator').classList.add('hidden');
+        messageInput.focus();
+    }
+});
+
+function addConversationToSidebar(id, title, engine) {
+    const list = document.getElementById('conversations-list');
+    const emptyMsg = list.querySelector('p.text-center');
+    if (emptyMsg) emptyMsg.remove();
+    
+    const div = document.createElement('div');
+    div.className = 'group relative p-3 rounded-lg hover:bg-gray-100 transition duration-200 cursor-pointer conversation-item bg-blue-50 border-l-4 border-blue-600';
+    div.dataset.id = id;
+    div.dataset.title = title;
+    div.dataset.engine = engine;
+    div.innerHTML = `
+        <div class="flex-1 min-w-0 pr-8">
+            <p class="text-sm font-medium text-gray-900 truncate">${title}</p>
+            <p class="text-xs text-gray-500">
+                <i class="fas fa-${engine === 'faiss' ? 'search text-blue-500' : 'project-diagram text-green-500'}"></i> 
+                ${engine.toUpperCase()} • 1 msg
+            </p>
+        </div>
+        <button onclick="event.stopPropagation(); deleteConversation(${id})" class="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded" title="Eliminar">
+            <i class="fas fa-trash text-xs"></i>
+        </button>
+    `;
+    list.prepend(div);
+}
+
+function addMessage(role, content, metadata = {}) {
+    const container = document.getElementById('messages-container');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-2xl px-4 py-3 rounded-lg ${
+        role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-900'
+    }`;
+    
+    let metaInfo = '';
+    if (metadata.engine) {
+        const llmLabel = metadata.llm_used || 'default';
+        metaInfo = `<div class="text-xs mt-2 ${role === 'user' ? 'text-blue-200' : 'text-gray-500'}">
+            <i class="fas fa-${metadata.engine === 'faiss' ? 'search' : 'project-diagram'} mr-1"></i>
+            ${metadata.engine.toUpperCase()} | ${llmLabel} |
+            ${metadata.retrieval_time?.toFixed(2) || '0'}s / ${metadata.generation_time?.toFixed(2) || '0'}s
+        </div>`;
+    }
+    
+    bubble.innerHTML = `<p class="whitespace-pre-wrap">${content}</p>${metaInfo}`;
+    messageDiv.appendChild(bubble);
+    container.appendChild(messageDiv);
+    container.scrollTop = container.scrollHeight;
+}
+</script>
+{% endblock %}
